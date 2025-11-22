@@ -238,35 +238,40 @@ main_menu
 #########################################
 
 install_tailscale() {
-clear
-echo "===== INSTALLING TAILSCALE ====="
+    clear
+    echo "===== INSTALLING TAILSCALE ====="
 
-curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
-    | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+    # Add key
+    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
+        | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
 
-curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-noarmor.list \
-    | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+    # Add Tailscale apt repo
+    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-noarmor.list \
+        | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
 
-sudo apt update
-sudo apt install -y tailscale
+    # Install
+    sudo apt update
+    sudo apt install -y tailscale
 
-sudo systemctl enable tailscaled
-sudo systemctl start tailscaled
+    # Start tailscale (non-systemd mode)
+    sudo service tailscaled start 2>/dev/null
 
-echo ""
-echo "Getting Tailscale login URL..."
-echo ""
+    echo ""
+    echo "Getting Tailscale login URL..."
+    echo ""
 
-LOGIN_URL=$(sudo tailscale up 2>&1 | grep -o "https://.*")
+    # Get login URL
+    LOGIN_URL=$(sudo tailscale up 2>&1 | grep -o "https://.*")
 
-echo "To authenticate this device, click the link below:"
-echo ""
-echo "➡️  $LOGIN_URL"
-echo ""
-echo "=============================================="
-sleep 3
-main_menu
+    echo "To authenticate this device, click the link below:"
+    echo ""
+    echo "➡️  $LOGIN_URL"
+    echo ""
+    echo "=============================================="
+    sleep 3
+    main_menu
 }
+
 
 #########################################
 # UNINSTALL FUNCTIONS
