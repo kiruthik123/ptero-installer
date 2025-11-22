@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #########################################
-# KS GAMING PANEL INSTALLER - FULL EDITION
+# KS GAMING PANEL INSTALLER - FULL SYSTEM
 #########################################
 
 # ASCII Banner
@@ -33,17 +33,19 @@ echo "1) Install Panel"
 echo "2) Install Wings"
 echo "3) Install Panel + Wings"
 echo "4) Install Cloudflare (cloudflared)"
-echo "7) Uninstall Tool"
+echo "5) Install Tailscale"
+echo "6) Uninstall Tool"
 echo "0) Exit"
 echo "-------------------------------------"
-read -p "Select an option [0-7]: " option
+read -p "Select an option [0-6]: " option
 
 case $option in
     1) install_panel ;;
     2) install_wings ;;
     3) install_panel; install_wings ;;
     4) install_cloudflare ;;
-    7) uninstall_menu ;;
+    5) install_tailscale ;;
+    6) uninstall_menu ;;
     0) exit ;;
     *) echo "Invalid choice!"; sleep 1; main_menu ;;
 esac
@@ -224,8 +226,38 @@ echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.c
 sudo apt-get update
 sudo apt-get install -y cloudflared
 
+echo ""
 echo "===== CLOUDFLARED INSTALLED ====="
+echo "Use: cloudflared tunnel login"
 sleep 2
+main_menu
+}
+
+#########################################
+# INSTALL TAILSCALE
+#########################################
+
+install_tailscale() {
+clear
+echo "===== INSTALLING TAILSCALE ====="
+
+curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+    | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+
+curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-noarmor.list \
+    | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+
+sudo apt update
+sudo apt install -y tailscale
+
+sudo systemctl enable tailscaled
+sudo systemctl start tailscaled
+
+echo ""
+echo "===== TAILSCALE INSTALLED ====="
+sudo tailscale up
+echo "================================"
+sleep 3
 main_menu
 }
 
@@ -236,13 +268,10 @@ main_menu
 uninstall_panel() {
     clear
     echo "===== UNINSTALLING PANEL ====="
-
     systemctl stop php* >/dev/null 2>&1
     rm -rf /var/www/pterodactyl
-
     mysql -u root -e "DROP DATABASE panel;" >/dev/null 2>&1
     mysql -u root -e "DROP USER 'ptero'@'localhost';" >/dev/null 2>&1
-
     echo "Panel removed!"
     sleep 2
 }
@@ -250,14 +279,11 @@ uninstall_panel() {
 uninstall_wings() {
     clear
     echo "===== UNINSTALLING WINGS ====="
-
     systemctl stop wings >/dev/null 2>&1
     systemctl disable wings >/dev/null 2>&1
-
     rm -rf /etc/pterodactyl
     rm -rf /etc/systemd/system/wings.service
     rm -rf /var/lib/pterodactyl
-
     echo "Wings removed!"
     sleep 2
 }
@@ -272,17 +298,17 @@ uninstall_all() {
 uninstall_menu() {
     clear
     echo "===== UNINSTALL TOOL ====="
-    echo "4) Uninstall Panel"
-    echo "5) Uninstall Wings"
-    echo "6) Uninstall All"
-    echo "0) Go Back"
-    read -p "Select an option [0-6]: " uninstall_option
+    echo "1) Uninstall Panel"
+    echo "2) Uninstall Wings"
+    echo "3) Uninstall All"
+    echo "4) Go Back"
+    read -p "Select an option [1-4]: " uninstall_option
 
     case $uninstall_option in
-        4) uninstall_panel ;;
-        5) uninstall_wings ;;
-        6) uninstall_all ;;
-        0) main_menu ;;
+        1) uninstall_panel ;;
+        2) uninstall_wings ;;
+        3) uninstall_all ;;
+        4) main_menu ;;
         *) echo "Invalid choice!"; sleep 1; uninstall_menu ;;
     esac
 }
@@ -290,4 +316,5 @@ uninstall_menu() {
 #########################################
 # START MENU
 #########################################
+
 main_menu
