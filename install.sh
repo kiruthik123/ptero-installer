@@ -234,7 +234,7 @@ main_menu
 }
 
 #########################################
-# INSTALL TAILSCALE
+# INSTALL TAILSCALE (CLICKABLE LOGIN)
 #########################################
 
 install_tailscale() {
@@ -254,9 +254,16 @@ sudo systemctl enable tailscaled
 sudo systemctl start tailscaled
 
 echo ""
-echo "===== TAILSCALE INSTALLED ====="
-sudo tailscale up
-echo "================================"
+echo "Getting Tailscale login URL..."
+echo ""
+
+LOGIN_URL=$(sudo tailscale up 2>&1 | grep -o "https://.*")
+
+echo "To authenticate this device, click the link below:"
+echo ""
+echo "➡️  $LOGIN_URL"
+echo ""
+echo "=============================================="
 sleep 3
 main_menu
 }
@@ -314,7 +321,7 @@ uninstall_menu() {
 }
 
 #########################################
-# START MENU
+# START
 #########################################
 
 main_menu
