@@ -1,28 +1,57 @@
 #!/bin/bash
 
+#########################################
+# KS GAMING PANEL INSTALLER - FULL EDITION
+#########################################
+
+# ASCII Banner
+clear
+echo -e "\e[96m"
+echo "██╗  ██╗███████╗     ███████╗ █████╗  ██████╗ ███╗   ███╗██╗███╗   ██╗ ██████╗ "
+echo "██║ ██╔╝██╔════╝     ██╔════╝██╔══██╗██╔════╝ ████╗ ████║██║████╗  ██║██╔════╝ "
+echo "█████╔╝ █████╗       ███████╗███████║██║  ███╗██╔████╔██║██║██╔██╗ ██║██║  ███╗"
+echo "██╔═██╗ ██╔══╝       ╚════██║██╔══██║██║   ██║██║╚██╔╝██║██║██║╚██╗██║██║   ██║"
+echo "██║  ██╗███████╗     ███████║██║  ██║╚██████╔╝██║ ╚═╝ ██║██║██║ ╚████║╚██████╔╝"
+echo "╚═╝  ╚═╝╚══════╝     ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ "
+echo -e "                             \e[92mKS GAMING INSTALLER\e[0m"
+echo -e "\e[0m"
+sleep 1
+
 TITLE1="🛠️ KS PANEL INSTALLER"
 TITLE2="   created by KS GAMING"
+
+#########################################
+# MAIN MENU
+#########################################
 
 main_menu() {
 clear
 echo -e "\e[36m$TITLE1\e[0m"
 echo -e "\e[90m$TITLE2\e[0m"
 echo "-------------------------------------"
-echo "1) Panel Installation"
-echo "2) Wings Installation"
-echo "3) Panel + Wings"
+echo "1) Install Panel"
+echo "2) Install Wings"
+echo "3) Install Panel + Wings"
+echo "4) Install Cloudflare (cloudflared)"
+echo "7) Uninstall Tool"
 echo "0) Exit"
 echo "-------------------------------------"
-read -p "Select an option [0-3]: " option
+read -p "Select an option [0-7]: " option
 
 case $option in
     1) install_panel ;;
     2) install_wings ;;
     3) install_panel; install_wings ;;
+    4) install_cloudflare ;;
+    7) uninstall_menu ;;
     0) exit ;;
     *) echo "Invalid choice!"; sleep 1; main_menu ;;
 esac
 }
+
+#########################################
+# INSTALL PANEL
+#########################################
 
 install_panel() {
 clear
@@ -95,17 +124,23 @@ echo "===== PANEL INSTALLED SUCCESSFULLY ====="
 echo "Panel URL: http://$panelDomain"
 echo "MySQL Password: $DB_PASS"
 echo "========================================"
+sleep 3
+main_menu
 }
+
+#########################################
+# INSTALL WINGS
+#########################################
 
 install_wings() {
 clear
 echo "===== WINGS INSTALLATION ====="
 
-read -p "Enter Wings Domain or IP (e.g., node.example.com or 45.x.x.x): " wingsDomain
+read -p "Enter Wings Domain or IP: " wingsDomain
 read -p "Enter Wings UUID: " wingsUUID
 read -p "Enter Wings Token ID: " wingsTokenID
 read -p "Enter Wings Token: " wingsToken
-read -p "Enter Remote Base URL (example: http://panel.example.com): " remoteBase
+read -p "Enter Remote Base URL (http://panel.example.com): " remoteBase
 
 echo "[1/4] Installing Docker..."
 curl -fsSL https://get.docker.com | sh
@@ -165,11 +200,94 @@ systemctl start wings
 echo ""
 echo "===== WINGS INSTALLED SUCCESSFULLY ====="
 echo "Wings URL: http://$wingsDomain:8080"
-echo "UUID: $wingsUUID"
-echo "Token ID: $wingsTokenID"
-echo "Token: $wingsToken"
-echo "Remote Base: $remoteBase"
 echo "========================================"
+sleep 3
+main_menu
 }
 
+#########################################
+# INSTALL CLOUDFLARED
+#########################################
+
+install_cloudflare() {
+clear
+echo "===== INSTALLING CLOUDFLARED ====="
+
+sudo mkdir -p --mode=0755 /usr/share/keyrings
+
+curl -fsSL https://pkg.cloudflare.com/cloudflare-public-v2.gpg \
+    | sudo tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
+
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' \
+    | sudo tee /etc/apt/sources.list.d/cloudflared.list
+
+sudo apt-get update
+sudo apt-get install -y cloudflared
+
+echo "===== CLOUDFLARED INSTALLED ====="
+sleep 2
+main_menu
+}
+
+#########################################
+# UNINSTALL FUNCTIONS
+#########################################
+
+uninstall_panel() {
+    clear
+    echo "===== UNINSTALLING PANEL ====="
+
+    systemctl stop php* >/dev/null 2>&1
+    rm -rf /var/www/pterodactyl
+
+    mysql -u root -e "DROP DATABASE panel;" >/dev/null 2>&1
+    mysql -u root -e "DROP USER 'ptero'@'localhost';" >/dev/null 2>&1
+
+    echo "Panel removed!"
+    sleep 2
+}
+
+uninstall_wings() {
+    clear
+    echo "===== UNINSTALLING WINGS ====="
+
+    systemctl stop wings >/dev/null 2>&1
+    systemctl disable wings >/dev/null 2>&1
+
+    rm -rf /etc/pterodactyl
+    rm -rf /etc/systemd/system/wings.service
+    rm -rf /var/lib/pterodactyl
+
+    echo "Wings removed!"
+    sleep 2
+}
+
+uninstall_all() {
+    uninstall_panel
+    uninstall_wings
+    echo "All components removed!"
+    sleep 2
+}
+
+uninstall_menu() {
+    clear
+    echo "===== UNINSTALL TOOL ====="
+    echo "4) Uninstall Panel"
+    echo "5) Uninstall Wings"
+    echo "6) Uninstall All"
+    echo "0) Go Back"
+    read -p "Select an option [0-6]: " uninstall_option
+
+    case $uninstall_option in
+        4) uninstall_panel ;;
+        5) uninstall_wings ;;
+        6) uninstall_all ;;
+        0) main_menu ;;
+        *) echo "Invalid choice!"; sleep 1; uninstall_menu ;;
+    esac
+}
+
+#########################################
+# START MENU
+#########################################
 main_menu
