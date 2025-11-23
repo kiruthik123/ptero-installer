@@ -2,6 +2,8 @@
 
 #########################################
 # KS GAMING PANEL INSTALLER - FULL SYSTEM
+# (Merged & upgraded: Tailscale auto-detect,
+#  Nginx installer, Panel troubleshooting)
 #########################################
 
 # ASCII Banner
@@ -35,9 +37,11 @@ echo "3) Install Panel + Wings"
 echo "4) Install Cloudflare (cloudflared)"
 echo "5) Install Tailscale"
 echo "6) Uninstall Tool"
+echo "7) Install Nginx (for Panel)"
+echo "8) Panel Troubleshoot / Fix"
 echo "0) Exit"
 echo "-------------------------------------"
-read -p "Select an option [0-6]: " option
+read -p "Select an option [0-8]: " option
 
 case $option in
     1) install_panel ;;
@@ -46,6 +50,8 @@ case $option in
     4) install_cloudflare ;;
     5) install_tailscale ;;
     6) uninstall_menu ;;
+    7) install_nginx ;;
+    8) panel_troubleshoot ;;
     0) exit ;;
     *) echo "Invalid choice!"; sleep 1; main_menu ;;
 esac
@@ -59,7 +65,7 @@ install_panel() {
 clear
 echo "===== PANEL INSTALLATION ====="
 
-read -p "Enter your panel domain (example: panel.example.com): " panelDomain
+read -p "Enter your panel domain or IP (example: panel.example.com or 1.2.3.4): " panelDomain
 read -p "Do you want to create admin user? (yes/no): " makeAdmin
 
 if [[ "$makeAdmin" == "yes" ]]; then
@@ -68,48 +74,50 @@ if [[ "$makeAdmin" == "yes" ]]; then
     read -p "Admin Password: " adminPass
 fi
 
-echo "[1/6] Updating system..."
+echo "[1/8] Updating system..."
 apt update -y && apt upgrade -y
 
-echo "[2/6] Installing dependencies..."
+echo "[2/8] Installing dependencies..."
 apt install -y curl wget git zip unzip tar mariadb-server php php-cli php-common php-curl php-mysql php-gd php-mbstring php-xml php-bcmath php-json php-zip php-fpm
 
-echo "[3/6] Setting up panel directory..."
+echo "[3/8] Setting up panel directory..."
 mkdir -p /var/www/pterodactyl
 cd /var/www/pterodactyl
 
-echo "[4/6] Downloading Pterodactyl Panel..."
+echo "[4/8] Downloading Pterodactyl Panel..."
 curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
 tar -xzvf panel.tar.gz
-chmod -R 755 storage bootstrap/cache
+chmod -R 755 storage bootstrap/cache || true
 
-echo "[5/6] Installing Composer..."
+echo "[5/8] Installing Composer..."
 curl -sS https://getcomposer.org/installer | php
 mv composer.phar /usr/bin/composer
-composer install --no-dev --optimize-autoloader
+composer install --no-dev --optimize-autoloader || true
 
-echo "[6/6] Configuring Panel..."
+echo "[6/8] Configuring Panel..."
 cp .env.example .env
-php artisan key:generate --force
+php artisan key:generate --force || true
 
 DB_PASS=$(openssl rand -hex 12)
 
 mysql -u root -e "CREATE USER 'ptero'@'localhost' IDENTIFIED BY '$DB_PASS';"
-mysql -u root -e "CREATE DATABASE panel;"
+mysql -u root -e "CREATE DATABASE IF NOT EXISTS panel;"
 mysql -u root -e "GRANT ALL PRIVILEGES ON panel.* TO 'ptero'@'localhost';"
 mysql -u root -e "FLUSH PRIVILEGES;"
 
-php artisan p:environment:database --host=127.0.0.1 --port=3306 --database=panel --username=ptero --password="$DB_PASS"
+php artisan p:environment:database --host=127.0.0.1 --port=3306 --database=panel --username=ptero --password="$DB_PASS" || true
 
+# Set APP_URL to http (Cloudflare/Tunnel friendly)
 php artisan p:environment:setup \
     --url="http://$panelDomain" \
     --author="$adminEmail" \
     --timezone="Asia/Kolkata" \
     --cache="file" \
     --session="file" \
-    --queue="sync"
+    --queue="sync" || true
 
-php artisan migrate --seed --force
+echo "[7/8] Running migrations..."
+php artisan migrate --seed --force || true
 
 if [[ "$makeAdmin" == "yes" ]]; then
 php artisan p:user:make \
@@ -118,8 +126,11 @@ php artisan p:user:make \
     --name-first="Admin" \
     --name-last="User" \
     --password="$adminPass" \
-    --admin=1
+    --admin=1 || true
 fi
+
+echo "[8/8] Finalizing permissions..."
+chown -R www-data:www-data /var/www/pterodactyl || true
 
 echo ""
 echo "===== PANEL INSTALLED SUCCESSFULLY ====="
@@ -195,9 +206,9 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable wings
-systemctl start wings
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable wings 2>/dev/null || true
+systemctl start wings 2>/dev/null || true
 
 echo ""
 echo "===== WINGS INSTALLED SUCCESSFULLY ====="
@@ -215,16 +226,16 @@ install_cloudflare() {
 clear
 echo "===== INSTALLING CLOUDFLARED ====="
 
-sudo mkdir -p --mode=0755 /usr/share/keyrings
+mkdir -p --mode=0755 /usr/share/keyrings
 
 curl -fsSL https://pkg.cloudflare.com/cloudflare-public-v2.gpg \
-    | sudo tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
+    | tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
 
 echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' \
-    | sudo tee /etc/apt/sources.list.d/cloudflared.list
+    | tee /etc/apt/sources.list.d/cloudflared.list
 
-sudo apt-get update
-sudo apt-get install -y cloudflared
+apt-get update
+apt-get install -y cloudflared
 
 echo ""
 echo "===== CLOUDFLARED INSTALLED ====="
@@ -234,44 +245,219 @@ main_menu
 }
 
 #########################################
-# INSTALL TAILSCALE (CLICKABLE LOGIN)
+# INSTALL TAILSCALE (auto-detect and clickable login)
 #########################################
 
 install_tailscale() {
     clear
     echo "===== INSTALLING TAILSCALE ====="
 
-    # Add key
-    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
-        | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+    # Detect OS
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        CODENAME=${VERSION_CODENAME:-$UBUNTU_CODENAME}
+        IDNAME=${ID:-ubuntu}
+    else
+        echo "Cannot detect OS. Aborting Tailscale install."
+        sleep 2
+        main_menu
+        return
+    fi
 
-    # Add Tailscale apt repo
-    curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-noarmor.list \
-        | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+    echo "Detected: $NAME ($IDNAME $CODENAME)"
 
-    # Install
-    sudo apt update
-    sudo apt install -y tailscale
+    # Build gpg and list URLs based on detection (supports ubuntu & debian)
+    GPG_URL="https://pkgs.tailscale.com/stable/${IDNAME}/${CODENAME}.noarmor.gpg"
+    LIST_URL="https://pkgs.tailscale.com/stable/${IDNAME}/${CODENAME}.tailscale-noarmor.list"
 
-    # Start tailscale (non-systemd mode)
-    sudo service tailscaled start 2>/dev/null
+    # Try to fetch repo files (will fail gracefully if unsupported)
+    if ! curl -fsSL "$GPG_URL" > /dev/null 2>&1; then
+        echo "Tailscale repo not available for ${IDNAME}/${CODENAME}. Trying 'debian' fallback..."
+        GPG_URL="https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg"
+        LIST_URL="https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-noarmor.list"
+    fi
+
+    # Add key and repo
+    curl -fsSL "$GPG_URL" | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+    curl -fsSL "$LIST_URL" | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+
+    apt update
+    apt install -y tailscale || {
+        echo "Tailscale installation failed or unsupported OS."
+        sleep 2
+        main_menu
+        return
+    }
+
+    # Start tailscaled (use systemctl if available, fallback to service)
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl enable tailscaled 2>/dev/null || true
+        systemctl start tailscaled 2>/dev/null || true
+    else
+        service tailscaled start 2>/dev/null || true
+    fi
 
     echo ""
     echo "Getting Tailscale login URL..."
     echo ""
 
-    # Get login URL
-    LOGIN_URL=$(sudo tailscale up 2>&1 | grep -o "https://.*")
+    # Run tailscale up and capture login URL (it prints URL to stderr/stdout)
+    LOGIN_URL=$(sudo tailscale up 2>&1 | grep -o "https://login.tailscale.com/[^ ]*" | head -n1)
 
-    echo "To authenticate this device, click the link below:"
-    echo ""
-    echo "➡️  $LOGIN_URL"
-    echo ""
+    if [ -z "$LOGIN_URL" ]; then
+        echo "Could not automatically get a login URL. Try running 'sudo tailscale up' manually on the server."
+    else
+        echo "To authenticate this device, click the link below:"
+        echo ""
+        echo "➡️  $LOGIN_URL"
+        echo ""
+    fi
+
     echo "=============================================="
     sleep 3
     main_menu
 }
 
+#########################################
+# INSTALL NGINX (simple Pterodactyl config)
+#########################################
+
+install_nginx() {
+    clear
+    echo "===== INSTALLING NGINX & CREATING SITE FOR PTERODACTYL ====="
+    read -p "Enter the panel domain or IP you want Nginx to serve (example: panel.example.com or 1.2.3.4): " nginxDomain
+
+    apt update
+    apt install -y nginx
+
+    # detect php-fpm socket version (common versions)
+    PHP_SOCK=""
+    if [ -S /run/php/php8.1-fpm.sock ]; then
+        PHP_SOCK="/run/php/php8.1-fpm.sock"
+    elif [ -S /run/php/php8.2-fpm.sock ]; then
+        PHP_SOCK="/run/php/php8.2-fpm.sock"
+    elif [ -S /run/php/php7.4-fpm.sock ]; then
+        PHP_SOCK="/run/php/php7.4-fpm.sock"
+    else
+        # fallback: use tcp
+        PHP_SOCK="127.0.0.1:9000"
+    fi
+
+    cat <<EOF >/etc/nginx/sites-available/pterodactyl
+server {
+    listen 80;
+    server_name ${nginxDomain};
+
+    root /var/www/pterodactyl/public;
+    index index.php;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php\$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+        fastcgi_pass ${PHP_SOCK};
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param HTTP_PROXY "";
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+}
+EOF
+
+    ln -sf /etc/nginx/sites-available/pterodactyl /etc/nginx/sites-enabled/pterodactyl
+    nginx -t || true
+
+    # restart services with fallback
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl restart nginx 2>/dev/null || true
+        # try to restart php-fpm services we detected
+        if [ -S /run/php/php8.1-fpm.sock ]; then systemctl restart php8.1-fpm 2>/dev/null || true; fi
+        if [ -S /run/php/php8.2-fpm.sock ]; then systemctl restart php8.2-fpm 2>/dev/null || true; fi
+    else
+        service nginx restart 2>/dev/null || true
+    fi
+
+    echo "Nginx installed and site created for ${nginxDomain}. Visit http://${nginxDomain}"
+    sleep 2
+    main_menu
+}
+
+#########################################
+# PANEL TROUBLESHOOT / FIX
+#########################################
+
+panel_troubleshoot() {
+    clear
+    echo "===== PANEL TROUBLESHOOT / FIX ====="
+    echo "This will run a few checks and show logs."
+    read -p "Enter your panel directory (default: /var/www/pterodactyl) or press enter: " PANEL_DIR
+    PANEL_DIR=${PANEL_DIR:-/var/www/pterodactyl}
+
+    if [ ! -d "$PANEL_DIR" ]; then
+        echo "Panel directory not found: $PANEL_DIR"
+        sleep 2
+        main_menu
+        return
+    fi
+
+    echo ""
+    echo "-> php artisan p:info (if available)"
+    cd "$PANEL_DIR" || true
+    if command -v php >/dev/null 2>&1; then
+        php artisan p:info || echo "artisan p:info failed or not available."
+    else
+        echo "php not found on PATH."
+    fi
+    echo ""
+    echo "-> Check PHP-FPM service status (common versions):"
+    for v in 8.2 8.1 7.4; do
+        svc="php${v}-fpm"
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl status $svc --no-pager -n 5 2>/dev/null || true
+        else
+            service $svc status 2>/dev/null || true
+        fi
+    done
+
+    echo ""
+    echo "-> Check nginx status"
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl status nginx --no-pager -n 5 2>/dev/null || service nginx status 2>/dev/null || true
+    else
+        service nginx status 2>/dev/null || true
+    fi
+
+    echo ""
+    echo "-> Last 120 lines of nginx error log (if exists):"
+    if [ -f /var/log/nginx/error.log ]; then
+        tail -n 120 /var/log/nginx/error.log
+    else
+        echo "No /var/log/nginx/error.log found."
+    fi
+
+    echo ""
+    echo "-> Last 120 lines of php-fpm log (if exists):"
+    if [ -f /var/log/php8.1-fpm.log ]; then
+        tail -n 120 /var/log/php8.1-fpm.log
+    else
+        echo "No /var/log/php8.1-fpm.log found - check php-fpm logs in /var/log or journalctl."
+    fi
+
+    echo ""
+    echo "If panel still doesn't load, share the above output or run:"
+    echo " - cd $PANEL_DIR && php artisan migrate --seed --force"
+    echo " - tail -f /var/log/nginx/error.log"
+    echo " - journalctl -u php8.1-fpm -n 200 --no-pager"
+    echo ""
+    read -p "Press enter to return to menu..." tmp
+    main_menu
+}
 
 #########################################
 # UNINSTALL FUNCTIONS
@@ -280,10 +466,19 @@ install_tailscale() {
 uninstall_panel() {
     clear
     echo "===== UNINSTALLING PANEL ====="
-    systemctl stop php* >/dev/null 2>&1
+    # stop php-fpm services if possible
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop php8.2-fpm 2>/dev/null || true
+        systemctl stop php8.1-fpm 2>/dev/null || true
+    else
+        service php8.2-fpm stop 2>/dev/null || true
+        service php8.1-fpm stop 2>/dev/null || true
+    fi
+
     rm -rf /var/www/pterodactyl
-    mysql -u root -e "DROP DATABASE panel;" >/dev/null 2>&1
-    mysql -u root -e "DROP USER 'ptero'@'localhost';" >/dev/null 2>&1
+    mysql -u root -e "DROP DATABASE IF EXISTS panel;" >/dev/null 2>&1 || true
+    mysql -u root -e "DROP USER IF EXISTS 'ptero'@'localhost';" >/dev/null 2>&1 || true
+
     echo "Panel removed!"
     sleep 2
 }
@@ -291,8 +486,13 @@ uninstall_panel() {
 uninstall_wings() {
     clear
     echo "===== UNINSTALLING WINGS ====="
-    systemctl stop wings >/dev/null 2>&1
-    systemctl disable wings >/dev/null 2>&1
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop wings 2>/dev/null || true
+        systemctl disable wings 2>/dev/null || true
+    else
+        service wings stop 2>/dev/null || true
+    fi
+
     rm -rf /etc/pterodactyl
     rm -rf /etc/systemd/system/wings.service
     rm -rf /var/lib/pterodactyl
